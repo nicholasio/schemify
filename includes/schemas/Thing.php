@@ -11,6 +11,7 @@
 namespace Schemify\Schemas;
 
 use Schemify\Core as Core;
+use Schemify\Cache as  Cache;
 
 class Thing implements \JsonSerializable {
 
@@ -165,14 +166,17 @@ class Thing implements \JsonSerializable {
 	 *
 	 * @param int  $post_id The ID of the post being represented by this object.
 	 * @param bool $is_main Whether or not this is the top-level schema being built.
+	 *
+	 * @return array|bool|mixed
 	 */
 	protected function build( $post_id, $is_main ) {
-
-		// Placeholder is using %s as this *can* be a non-integer value (e.g. "home").
-		$cache_key = sprintf( 'schema_%s', $post_id );
+		$cache_key          = Cache\get_key( $post_id );
+		$last_update        = wp_cache_get( $cache_key . '_last_update', 'schemify', false );
+		$last_global_update = wp_cache_get( 'schemify_last_update', 'schemify', false );
 
 		// Return early if we have a cached version.
-		if ( $is_main && ( $cached = wp_cache_get( $cache_key, 'schemify', false ) ) ) {
+		if ( $is_main && ( $cached = wp_cache_get( $cache_key, 'schemify', false ) ) &&
+			( (int) $last_update > (int) $last_global_update ) ) {
 			return $cached;
 		}
 
@@ -191,7 +195,11 @@ class Thing implements \JsonSerializable {
 
 		// Cache the result (top-level only) so we don't have to calculate it every time.
 		if ( $is_main ) {
-			wp_cache_set( $cache_key, $data, 'schemify', 0 );
+			if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+				$data['cached'] = date( 'Y-m-d H:i:s' );
+			}
+			wp_cache_set( $cache_key, $data, 'schemify', 12 * HOUR_IN_SECONDS );
+			wp_cache_set( $cache_key . '_last_update', time(), 'schemify', 0 );
 		}
 
 		// Finally, return the value.
@@ -213,31 +221,20 @@ class Thing implements \JsonSerializable {
 		// Be sure to include the current class at the end of the list.
 		$parents[ $class ] = $class;
 
-		// With the class names in hand, get all of the $properties, keyed by the class.
-		$properties = array_map( function ( $schema ) {
-			return array_diff( $schema::$properties, (array) $schema::$removeProperties );
-		}, $parents );
-
 		// Now that we have an array of property additions/deletions keyed by their schema, merge 'em.
-		$properties = array_reduce( $properties, array( $this, 'mergeSchemaProperties' ), array() );
+		$properties = array_reduce( $parents, function ( $list, $schema ) {
+			$props = array_merge( $list, $schema::$properties );
+			return array_diff( $props, $schema::$removeProperties );
+		}, array() );
+
+		// Ensure we don't have duplicates.
+		$properties = array_unique( $properties );
+		sort( $properties );
 
 		// Save the value in $this->propertyList.
-		$this->propertyList = array_unique( $properties );
+		$this->propertyList = $properties;
 
 		return $this->propertyList;
-	}
-
-	/**
-	 * Merge a list of property additions/removals into the existing list.
-	 *
-	 * @param array $list  The current, master list of properties.
-	 * @param array $props The properties to add or remove from the master list.
-	 * @return array The filtered $list array.
-	 */
-	protected function mergeSchemaProperties( $list, $props ) {
-		$list = array_merge( $list, (array) $props );
-
-		return $list;
 	}
 
 	/**

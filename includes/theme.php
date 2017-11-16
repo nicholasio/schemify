@@ -57,9 +57,19 @@ function set_default_schemas( $schema, $object_type, $post_type, $object_id ) {
 			break;
 	}
 
+	// Collect values from $wp_post_types.
+	$post_type_schemas = get_cpt_schemas();
+
+	if ( isset( $post_type_schemas[ $post_type ] ) ) {
+		$schema = $post_type_schemas[ $post_type ];
+	}
+
 	// The homepage should be a WebSite.
 	if ( is_front_page() || is_home() ) {
 		$schema = 'WP\WebSite';
+
+	} elseif ( is_search() ) {
+		$schema = 'SearchResultsPage';
 	}
 
 	return $schema;
@@ -67,10 +77,10 @@ function set_default_schemas( $schema, $object_type, $post_type, $object_id ) {
 add_filter( 'schemify_schema', __NAMESPACE__ . '\set_default_schemas', 1, 4 );
 
 /**
- * Appends the JSON+LD object to the site footer.
+ * Appends the JSON-LD object to the site footer.
  */
 function append_to_footer() {
-	$object_id   = get_the_ID();
+	$object_id   = get_queried_object_id();
 	$object_type = 'post';
 
 	// Return early on singular posts for unsupported post types.
@@ -86,8 +96,33 @@ function append_to_footer() {
 	} elseif ( is_author() ) {
 		$object_id   = get_the_author_meta( 'ID' );
 		$object_type = 'user';
+
+	} elseif ( is_search() ) {
+		$object_id   = 'search';
+		$object_type = 'search';
 	}
 
 	Core\get_json( $object_id, $object_type );
 }
 add_action( 'wp_footer', __NAMESPACE__ . '\append_to_footer' );
+
+/**
+ * Collect post type => schema mappings for custom post types.
+ *
+ * For convenience, developers can automatically assign a schema to custom post types via the
+ * 'schemify_schema' property on the post object.
+ *
+ * @return array A mapping of post type => schema for any post types with 'schemify_schema' props.
+ */
+function get_cpt_schemas() {
+	$post_types = get_post_types( null, 'object' );
+	$schemas    = array();
+
+	foreach ( $post_types as $post_type ) {
+		if ( isset( $post_type->schemify_schema ) && $post_type->schemify_schema ) {
+			$schemas[ $post_type->name ] = $post_type->schemify_schema;
+		}
+	}
+
+	return $schemas;
+}

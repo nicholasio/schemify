@@ -8,7 +8,7 @@
 namespace Schemify\Core;
 
 /**
- * Build the JSON+LD object for the given post.
+ * Build the JSON-LD object for the given post.
  *
  * @throws \Exception If the specified Schema class doesn't exist.
  *
@@ -121,7 +121,7 @@ function get_media_object_by_url( $url, $schema = 'MediaObject' ) {
 }
 
 /**
- * Output the JSON+LD for the given post.
+ * Output the JSON-LD for the given post.
  *
  * @param int    $post_id     Optional. The post ID to get the Schema object for. The default is
  *                            the current post.
@@ -130,10 +130,20 @@ function get_media_object_by_url( $url, $schema = 'MediaObject' ) {
  */
 function get_json( $post_id = 0, $object_type = 'post' ) {
 	$object = build_object( $post_id, $object_type );
+	$cached = false;
+	if ( isset( $object['cached'] ) ) {
+		$cached = $object['cached'];
+		unset( $object['cached'] );
+	}
 ?>
 
 <script type="application/ld+json">
-<?php echo wp_kses_post( wp_json_encode( $object, JSON_PRETTY_PRINT ) . PHP_EOL ); ?>
+<?php
+	echo wp_kses_post( wp_json_encode( $object, JSON_PRETTY_PRINT ) . PHP_EOL );
+	if ( false !== $cached ) {
+		echo sprintf( '<!-- Cached: %s -->', esc_js( $cached ) );
+	}
+?>
 </script>
 
 <?php

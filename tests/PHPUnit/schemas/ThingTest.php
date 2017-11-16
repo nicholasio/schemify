@@ -7,6 +7,7 @@
 
 namespace Schemify\Schemas;
 
+
 use WP_Mock as M;
 
 use Mockery;
@@ -19,6 +20,7 @@ class ThingTest extends Schemify\TestCase {
 
 	protected $testFiles = array(
 		'schemas/Thing.php',
+		'cache.php',
 	);
 
 	public function test__construct() {
@@ -143,7 +145,7 @@ class ThingTest extends Schemify\TestCase {
 	public function testGetSchema() {
 		$instance = Mockery::mock( __NAMESPACE__ . '\Thing' )->makePartial();
 
-		M::wpFunction( 'Schemify\Core\strip_namespace', array(
+		M::userFunction( 'Schemify\Core\strip_namespace', array(
 			'times'  => 1,
 			'return' => 'Thing',
 		) );
@@ -156,7 +158,7 @@ class ThingTest extends Schemify\TestCase {
 		$property = new ReflectionProperty( $instance, 'schema' );
 		$property->setAccessible( true );
 
-		M::wpFunction( 'Schemify\Core\strip_namespace', array(
+		M::userFunction( 'Schemify\Core\strip_namespace', array(
 			'return' => 'Thing',
 		) );
 
@@ -198,15 +200,32 @@ class ThingTest extends Schemify\TestCase {
 			'someProp' => 'value',
 		);
 
-		M::wpFunction( 'wp_cache_get', array(
+		M::userFunction( 'wp_cache_get', array(
+			'times'  => 1,
+			'args'   => array( 'schema_123_last_update', 'schemify', false ),
+			'return' => false,
+		) );
+
+		M::userFunction( 'wp_cache_get', array(
+			'times'  => 1,
+			'args'   => array( 'schemify_last_update', 'schemify', false ),
+			'return' => false,
+		) );
+
+		M::userFunction( 'wp_cache_get', array(
 			'times'  => 1,
 			'args'   => array( 'schema_123', 'schemify', false ),
 			'return' => false,
 		) );
 
-		M::wpFunction( 'wp_cache_set', array(
+		M::userFunction( 'wp_cache_set', array(
 			'times'  => 1,
-			'args'   => array( 'schema_123', $value, 'schemify', 0 ),
+			'args'   => array( 'schema_123', $value, 'schemify', 12 * HOUR_IN_SECONDS ),
+		) );
+
+		M::userFunction( 'wp_cache_set', array(
+			'times'  => 1,
+			'args'   => array( 'schema_123_last_update', M\Functions::type( 'int' ), 'schemify', 0 ),
 		) );
 
 		$this->assertEquals( $value, $method->invoke( $instance, 123, true ) );
@@ -217,7 +236,21 @@ class ThingTest extends Schemify\TestCase {
 		$method   = new ReflectionMethod( $instance, 'build' );
 		$method->setAccessible( true );
 
-		M::wpFunction( 'wp_cache_get', array(
+		M::userFunction( 'wp_cache_get', array(
+			'times'  => 1,
+			'args'   => array( 'schema_123_last_update', 'schemify', false ),
+			'return' => 200,
+		) );
+
+		M::userFunction( 'wp_cache_get', array(
+			'times'  => 1,
+			'args'   => array( 'schemify_last_update', 'schemify', false ),
+			'return' => 100,
+		) );
+
+		M::userFunction( 'wp_cache_get', array(
+			'times'  => 1,
+			'args'   => array( 'schema_123', 'schemify', false ),
 			'return' => array( 'schema', 'data' ),
 		) );
 
@@ -233,7 +266,7 @@ class ThingTest extends Schemify\TestCase {
 		$method   = new ReflectionMethod( $instance, 'build' );
 		$method->setAccessible( true );
 
-		M::wpFunction( 'wp_cache_get', array(
+		M::userFunction( 'wp_cache_get', array(
 			'return' => array( 'schema', 'data' ),
 		) );
 
@@ -248,7 +281,19 @@ class ThingTest extends Schemify\TestCase {
 		$method   = new ReflectionMethod( $instance, 'build' );
 		$method->setAccessible( true );
 
-		M::wpFunction( 'wp_cache_get', array(
+		M::userFunction( 'wp_cache_get', array(
+			'times'  => 1,
+			'args'   => array( 'schema_home_last_update', 'schemify', false ),
+			'return' => 200,
+		) );
+
+		M::userFunction( 'wp_cache_get', array(
+			'times'  => 1,
+			'args'   => array( 'schemify_last_update', 'schemify', false ),
+			'return' => 100,
+		) );
+
+		M::userFunction( 'wp_cache_get', array(
 			'times'  => 1,
 			'args'   => array( 'schema_home', 'schemify', false ),
 			'return' => array( 'schema', 'data' ),
@@ -265,6 +310,35 @@ class ThingTest extends Schemify\TestCase {
 		$property = new ReflectionClass( $instance );
 
 		$this->assertEquals( $property->getDefaultProperties()['properties'], $method->invoke( $instance ) );
+	}
+
+	/**
+	 * This method tests a lot, but it uses the TestChildSchema and TestGrandchildSchema classes
+	 * (located inside test-tools) to ensure that properties from Thing are merged with those from
+	 * our test classes.
+	 */
+	public function testGetPropertyListInheritsParentValues() {
+		require_once ABSPATH . 'TestChildSchema.php';
+		require_once ABSPATH . 'TestGrandchildSchema.php';
+
+		$instance = new TestGrandchildSchema( 123 );
+		$method   = new ReflectionMethod( $instance, 'getPropertyList' );
+		$method->setAccessible( true );
+		$thing    = new ReflectionClass( __NAMESPACE__ . '\Thing' );
+		$thing_props = $thing->getProperty( 'properties' );
+		$thing_props->setAccessible( true );
+		$props    = $thing_props->getValue();
+
+		/*
+		 * Append the hard-coded values from TestChildSchema and TestGrandchildSchema to $props.
+		 *
+		 * Since TestGrandchildSchema also has 'childBar' and 'childBaz' in the $removeProperties
+		 * property, omit these from the list of expected properties.
+		 */
+		$props = array_merge( $props, array( 'childFoo' ), array( 'grandchildFoo', 'grandchildBar' ) );
+		sort( $props );
+
+		$this->assertEquals( $props, $method->invoke( $instance ) );
 	}
 
 	public function testGetPropertyListCachesValue() {
@@ -295,27 +369,16 @@ class ThingTest extends Schemify\TestCase {
 		$this->assertEquals( $uniqid, $method->invoke( $instance ) );
 	}
 
-	public function testMergeSchemaProperties() {
-		$instance = new Thing( 123, true );
-		$method   = new ReflectionMethod( $instance, 'mergeSchemaProperties' );
-		$method->setAccessible( true );
-
-		$this->assertEquals(
-			array( 'foo', 'bar', 'baz' ),
-			$method->invoke( $instance, array( 'foo', 'bar' ), array( 'baz' ) )
-		);
-	}
-
 	public function testGetDescription() {
 		$instance = new Thing( 123, true );
 
-		M::wpFunction( 'get_the_excerpt', array(
+		M::userFunction( 'get_the_excerpt', array(
 			'times'  => 1,
 			'args'   => array( 123 ),
 			'return' => 'Excerpt',
 		) );
 
-		M::wpPassthruFunction( 'esc_html' );
+		M::passthruFunction( 'esc_html' );
 
 		$this->assertEquals( 'Excerpt', $instance->getDescription( 123 ) );
 	}
@@ -323,7 +386,7 @@ class ThingTest extends Schemify\TestCase {
 	public function testGetName() {
 		$instance = new Thing( 123, true );
 
-		M::wpFunction( 'get_the_title', array(
+		M::userFunction( 'get_the_title', array(
 			'times'  => 1,
 			'args'   => array( 123 ),
 			'return' => 'Name',
@@ -335,7 +398,7 @@ class ThingTest extends Schemify\TestCase {
 	public function testGetImage() {
 		$instance = new Thing( 123, true );
 
-		M::wpFunction( 'get_post_thumbnail_id', array(
+		M::userFunction( 'get_post_thumbnail_id', array(
 			'times'  => 1,
 			'args'   => array( 123 ),
 			'return' => 124,
@@ -347,7 +410,7 @@ class ThingTest extends Schemify\TestCase {
 	public function testGetImageIsNullWhenNotMainSchema() {
 		$instance = new Thing( 123, false );
 
-		M::wpFunction( 'get_post_thumbnail_id', array(
+		M::userFunction( 'get_post_thumbnail_id', array(
 			'times'  => 0,
 		) );
 
@@ -357,7 +420,7 @@ class ThingTest extends Schemify\TestCase {
 	public function testGetUrl() {
 		$instance = new Thing( 123, true );
 
-		M::wpFunction( 'get_permalink', array(
+		M::userFunction( 'get_permalink', array(
 			'times'  => 1,
 			'args'   => array( 123 ),
 			'return' => 'http://example.com',
